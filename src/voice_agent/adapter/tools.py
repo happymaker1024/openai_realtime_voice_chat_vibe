@@ -9,6 +9,7 @@ from voice_agent.adapter.currency import convert_currency as _convert
 
 from voice_agent.domain.rate_limiter import RateLimiter
 from voice_agent.adapter.temperature import convert_temperature as _convert_temp
+from voice_agent.adapter.length import convert_length as _convert_length
 
 
 
@@ -44,6 +45,12 @@ def convert_temperature_tool(value: float, from_unit: str, to_unit: str) -> str:
     return f"{value}°{from_unit.upper()} = {result}°{to_unit.upper()}"
 
 
+def convert_length_tool(value: float, from_unit: str, to_unit: str) -> str:
+    """길이 변환 결과를 사람이 읽는 문자열로 돌려준다."""
+    result = _convert_length(value, from_unit, to_unit)        # 지원 밖·음수면 ValueError
+    return f"{value} {from_unit} = {result} {to_unit}"
+
+
 # 이름 → 실제 함수 로 이어주는 표. run_tool이 여기서 함수를 찾아 부른다.
 TOOL_HANDLERS = {
     "get_current_time": get_current_time,
@@ -51,6 +58,7 @@ TOOL_HANDLERS = {
     "calculate": calculate,
     "convert_currency": convert_currency_tool,
     "convert_temperature": convert_temperature_tool,
+    "convert_length": convert_length_tool,
 }
 
 # 모델에게 알려줄 '도구 명세' 목록. name/description/parameters로 구성.
@@ -84,6 +92,15 @@ TOOL_SPECS = [
     ToolSpec(
         name="convert_temperature",
         description="온도를 변환한다. 지원: C(섭씨), F(화씨), K(켈빈). 온도 변환 요청 시 사용.",
+        parameters={
+            "value": {"type": "number"},
+            "from_unit": {"type": "string"},
+            "to_unit": {"type": "string"},
+        },
+    ),
+    ToolSpec(
+        name="convert_length",
+        description="길이를 변환한다. 지원: m, km, cm, mi(마일). 길이/거리 변환 요청 시 사용.",
         parameters={
             "value": {"type": "number"},
             "from_unit": {"type": "string"},

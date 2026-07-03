@@ -23,6 +23,7 @@ class AsyncRealtimeSession:
                 "input": {
                     "format": {"type": "audio/pcm", "rate": 24000},
                     "turn_detection": {"type": "semantic_vad"},
+                    "transcription": {"model": "gpt-4o-mini-transcribe"},
                 },
                 "output": {
                     "format": {"type": "audio/pcm", "rate": 24000},

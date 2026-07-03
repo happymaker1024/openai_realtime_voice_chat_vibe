@@ -1,0 +1,39 @@
+.github\claude-instuctions.md 프로젝트 규칙 파일이야. 
+
+## 기능: 길이 단위 변환 도구 convert_length
+- 목적: "3km는 몇 미터야?" 같은 길이 변환 질문에 답한다.
+- 지원 단위(허용 목록): m, km, cm, mi(마일).
+- 입력: value(number), from_unit(string), to_unit(string).
+- 규칙: 단위는 정규화(공백·대소문자) 후 허용 목록 검사. 밖이면 ValueError.
+- 음수 길이는 ValueError(길이는 0 이상).
+- 결과: "3 km = 3000.0 m" 형태의 문자열.
+- 등록: TOOL_SPECS/TOOL_HANDLERS에 추가, 핸들러 토글에 포함.
+- 배치: 변환 로직은 adapter/length.py, 도구 래퍼는 adapter/tools.py.
+
+
+
+위 규약과 스펙에 따라 convert_length의 '실패하는' pytest 테스트(uv run pytest)를
+tests/adapter/test_length.py 에 작성해줘. 구현은 아직 만들지 마.
+포함할 케이스:
+- 지원 단위 집합이 {m, km, cm, mi} 인지
+- km↔m 기본 변환(예: 3km = 3000m)
+- 같은 단위는 그대로(예: 5m→5m)
+- 지원 밖 단위 거부(ValueError)
+- 음수 길이 거부(ValueError)
+기존 테스트 스타일·import에 맞추고, 함수 이름은 test_로 시작.
+
+----- 2 번째 프롬프트 ------------
+
+방금 테스트를 통과하도록 구현해줘.
+1) src/voice_agent/adapter/length.py 에 convert_length(value, from_unit, to_unit)와 SUPPORTED
+   - 단위 정규화(공백·대소문자) → 허용 목록 검사(밖이면 ValueError)
+   - 음수 길이는 ValueError
+   - '미터 허브' 방식으로 변환(from → 미터 → to)
+2) adapter/tools.py 에 convert_length_tool 래퍼 추가 + TOOL_SPECS·TOOL_HANDLERS 등록
+3) 핸들러 __init__ 토글에 convert_length 추가
+규약 준수: 실행은 기존 dispatch_tool 파이프라인을 그대로 지나야 한다(핸들러는 dispatch_tool 한 줄 유지).
+계층: 변환 구현은 adapter다(도메인 아님). uv run pytest 전체가 초록인지 확인해.
+
+
+----- 3 번째 프롬프트 ------------
+

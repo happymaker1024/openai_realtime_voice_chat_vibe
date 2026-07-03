@@ -1,5 +1,6 @@
 from typing import Protocol   # '이런 메서드를 가진 무언가'라는 약속(인터페이스)을 만드는 도구
 
+from voice_agent.domain.conversation import Conversation
 from voice_agent.domain.session_config import SessionConfig  # 2교시에서 만든 세션 설정 값객체
 from voice_agent.domain.tool_spec import ToolSpec
 
@@ -29,4 +30,18 @@ class ToolRegistryPort(Protocol):
 
     def all_specs(self) -> list[ToolSpec]:
         """등록된 모든 도구의 명세를 돌려준다."""
+        ...
+
+
+class TranscriptStorePort(Protocol):
+    """대화를 어딘가에 저장하는 약속(파일·DB 등은 어댑터가 정한다)."""
+
+    def save(self, session_id: str, conversation: Conversation) -> None:
+        ...
+
+
+class SummarizerPort(Protocol):
+    """대화를 사람이 읽기 좋은 한 문장으로 요약하는 약속(모델 호출은 어댑터가 정한다)."""
+
+    def summarize(self, conversation: Conversation) -> str:
         ...

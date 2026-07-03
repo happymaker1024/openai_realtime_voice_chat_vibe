@@ -27,7 +27,12 @@ class OpenAIRealtimeAdapter:
         })
 
     def send_user_text(self, text: str) -> str:
-        # 1) 사용자 입력 텍스트를 '대화 아이템'으로 추가한다.
+        self._send_message_item(text)
+        self._request_text_response()
+        return self._collect_response_text()
+
+    def _send_message_item(self, text: str) -> None:
+        # 사용자 입력 텍스트를 '대화 아이템'으로 추가한다.
         self._conn.send_event({
             "type": "conversation.item.create",  # 이벤트 종류: 대화에 아이템 추가
             "item": {
@@ -37,13 +42,15 @@ class OpenAIRealtimeAdapter:
             },
         })
 
-        # 2) "이제 응답을 만들어 달라"고 요청한다(텍스트 형태로).
+    def _request_text_response(self) -> None:
+        # "이제 응답을 만들어 달라"고 요청한다(텍스트 형태로).
         self._conn.send_event({
             "type": "response.create",                        # 이벤트 종류: 응답 생성 요청
             "response": {"output_modalities": ["text"]},      # 응답도 텍스트로 받겠다
         })
 
-        # 3) 서버가 보내오는 이벤트들을 '끝날 때까지' 읽으며 텍스트 조각을 모은다.
+    def _collect_response_text(self) -> str:
+        # 서버가 보내오는 이벤트들을 '끝날 때까지' 읽으며 텍스트 조각을 모은다.
         chunks: list[str] = []          # 조각(delta)들을 담을 리스트
         while True:                     # 끝(response.done)을 만날 때까지 반복
             event = self._conn.recv_event()      # 서버 이벤트 하나를 받는다

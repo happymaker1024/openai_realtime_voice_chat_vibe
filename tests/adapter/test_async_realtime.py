@@ -37,6 +37,18 @@ async def test_open_sends_audio_session_update():
     assert conn.sent[0]["session"]["model"] == "gpt-realtime"
 
 
+async def test_open_enables_user_input_transcription():
+    conn = FakeAsyncConnection()
+    session = AsyncRealtimeSession(connection=conn)
+
+    await session.open(SessionConfig())
+
+    # GA 구조: session.audio.input.transcription (session 최상위 input_audio_transcription 아님)
+    audio_input = conn.sent[0]["session"]["audio"]["input"]
+    assert audio_input["transcription"] == {"model": "gpt-4o-mini-transcribe"}
+    assert "input_audio_transcription" not in conn.sent[0]["session"]
+
+
 async def test_send_audio_appends_base64_pcm():
     conn = FakeAsyncConnection()
     session = AsyncRealtimeSession(connection=conn)

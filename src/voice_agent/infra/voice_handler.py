@@ -1,4 +1,5 @@
 import asyncio
+import uuid
 
 from fastrtc import AsyncStreamHandler, wait_for_item
 from websockets.exceptions import ConnectionClosed
@@ -7,16 +8,24 @@ from voice_agent.adapter.async_realtime import AsyncRealtimeSession
 from voice_agent.adapter.async_websocket import AsyncWebSocketConnection
 from voice_agent.adapter.function_call import extract_function_call
 from voice_agent.adapter.realtime_tools import build_tools
-from voice_agent.adapter.tools import TOOL_SPECS, TOOL_SPECS, dispatch_tool   # run_tool·rate_limit_error 대신
-from voice_agent.adapter.transcript import extract_transcript_delta, extract_error_message
+from voice_agent.adapter.tools import TOOL_SPECS, dispatch_tool   # run_tool·rate_limit_error 대신
+from voice_agent.adapter.transcript import (
+    extract_error_message,
+    extract_transcript_delta,
+    extract_user_transcript,
+)
+from voice_agent.adapter.transcript_store import FileTranscriptStore
 from voice_agent.domain.audio_frame import AudioFrame
+from voice_agent.domain.conversation import Conversation
 from voice_agent.domain.rate_limiter import RateLimiter
 from voice_agent.domain.session_config import SessionConfig
+from voice_agent.domain.turn import Role, Turn
 
 from voice_agent.adapter.audio_output import decode_audio_delta, is_speech_started
 from voice_agent.domain.tool_toggle import ToolToggleState
 from voice_agent.infra import transcript_bus
 from voice_agent.usecase.list_active_tools import ListActiveTools
+from voice_agent.usecase.save_conversation import SaveConversation
 
 
 class _StaticToolRegistry:
@@ -38,10 +47,16 @@ class RealtimeVoiceHandler(AsyncStreamHandler):
 
         # 토글: 처음엔 두 도구를 모두 켠 상태로 시작(원하면 하나만 켜도 됨).
         self._toggles = ToolToggleState()
-        for name in ("get_current_time", "get_weather", "calculate", "convert_currency", "convert_temperature"):
-            self._toggles.toggle(name)                      # 네 도구 모두 켜기
+        for name in ("get_current_time", "get_weather", "calculate", "convert_currency", "convert_temperature", "convert_length"):
+            self._toggles.toggle(name)                      # 도구 모두 켜기
         # 도구별로 10초에 5번까지 허용(남용·반복 호출 방지).
         self._limiter = RateLimiter(max_calls=5, window_seconds=10)
+
+        # 대화 저장: 이번 세션의 대화를 턴으로 모았다가 종료 시 파일로 남긴다.
+        self._conversation = Conversation()
+        self._assistant_buffer = ""                       # 진행 중 어시스턴트 자막 조각들
+        self._session_id = uuid.uuid4().hex[:8]           # 세션 식별자
+        self._save = SaveConversation(store=FileTranscriptStore(directory="transcripts"))
 
     def copy(self) -> "RealtimeVoiceHandler":
         # 접속자마다 새 핸들러 인스턴스
@@ -81,46 +96,82 @@ class RealtimeVoiceHandler(AsyncStreamHandler):
         # 자막·오류를 헬퍼로 판정하고, 핸들러는 출력만 맡는다.
         try:
             async for event in self._session.events():
-                etype = event.get("type")
-                # 응답 생성 진행 상태 추적
-                if etype == "response.created":
-                    self._response_active = True
-                elif etype == "response.done":
-                    self._response_active = False
-                    print(flush=True)
-
-                # 1) 자막: 텍스트 조각이면 화면에 출력하고 다음 이벤트로.
-                text = extract_transcript_delta(event)
-                if text:
-                    print(text, end="", flush=True)
-                    transcript_bus.publish(text)   # ← 브라우저로도 방송
-                    continue
-                # 2) 음성: base64 PCM을 디코드해 재생 큐에 넣는다.  ← 이 교시에 추가
-                #    put_nowait: 기다리지 않고 즉시 큐에 넣기(생산자 역할).
-                #    reshape(1, -1): (N,) 1차원을 (1, N) 2차원(모노 한 채널)으로.
-                audio = decode_audio_delta(event)
-                if audio is not None:
-                    self.output_queue.put_nowait((24000, audio.reshape(1, -1)))
-                    continue
-                # 2.5) 바지인: 사용자가 말을 시작하면 재생 중인 오디오를 즉시 버린다
-                if is_speech_started(event):
-                    await self._barge_in()
-                    continue
-                # 2.7) 함수 호출: 모델이 도구 실행을 요청했다  ← 이 교시에 추가
-                fc = extract_function_call(event)
-                if fc is not None:
-                    await self._handle_tool_call(fc)
-                    continue
-                # 3) 오류 / 응답 끝 (오류는 5교시 헬퍼로 판정)
-                error = extract_error_message(event)
-                if error:
-                    print(f"\n[오류] {error}", flush=True)
-                elif event.get("type") == "response.done":
-                    print(flush=True)
-                    transcript_bus.publish("")   # ← 브라우저로도 방송
+                await self._process_event(event)
         except ConnectionClosed:
             # 중지/새로고침 등으로 세션이 닫히면 조용히 종료 (정상 상황)
             print("[종료] 세션이 닫혔습니다", flush=True)
+
+    async def _process_event(self, event: dict) -> None:
+        # 이벤트 하나를 종류별로 판정해 알맞은 헬퍼에 넘긴다.
+        self._track_response_state(event)
+        if self._emit_transcript(event):
+            return
+        if self._emit_user_transcript(event):
+            return
+        if self._emit_audio(event):
+            return
+        if is_speech_started(event):
+            await self._barge_in()
+            return
+        fc = extract_function_call(event)
+        if fc is not None:
+            await self._handle_tool_call(fc)
+            return
+        self._emit_error_or_done(event)
+
+    def _track_response_state(self, event: dict) -> None:
+        # 응답 생성 진행 상태 추적
+        etype = event.get("type")
+        if etype == "response.created":
+            self._response_active = True
+        elif etype == "response.done":
+            self._response_active = False
+            print(flush=True)
+            self._finalize_assistant_turn()
+
+    def _finalize_assistant_turn(self) -> None:
+        # 한 응답이 끝나면 모아둔 자막을 어시스턴트 턴으로 확정한다.
+        if self._assistant_buffer.strip():
+            self._conversation.add_turn(Turn(role=Role.ASSISTANT, text=self._assistant_buffer.strip()))
+        self._assistant_buffer = ""
+
+    def _emit_transcript(self, event: dict) -> bool:
+        # 자막: 텍스트 조각이면 화면에 출력한다. 처리했으면 True.
+        text = extract_transcript_delta(event)
+        if not text:
+            return False
+        print(text, end="", flush=True)
+        transcript_bus.publish(text)   # ← 브라우저로도 방송
+        self._assistant_buffer += text   # 대화 저장용으로 조각을 모은다
+        return True
+
+    def _emit_user_transcript(self, event: dict) -> bool:
+        # 사용자 입력 전사 완료: 완성된 문장을 바로 사용자 턴으로 기록한다.
+        text = extract_user_transcript(event)
+        if text is None:
+            return False
+        if text.strip():
+            self._conversation.add_turn(Turn(role=Role.USER, text=text.strip()))
+        return True
+
+    def _emit_audio(self, event: dict) -> bool:
+        # 음성: base64 PCM을 디코드해 재생 큐에 넣는다. 처리했으면 True.
+        #   put_nowait: 기다리지 않고 즉시 큐에 넣기(생산자 역할).
+        #   reshape(1, -1): (N,) 1차원을 (1, N) 2차원(모노 한 채널)으로.
+        audio = decode_audio_delta(event)
+        if audio is None:
+            return False
+        self.output_queue.put_nowait((24000, audio.reshape(1, -1)))
+        return True
+
+    def _emit_error_or_done(self, event: dict) -> None:
+        # 오류 / 응답 끝 (오류는 5교시 헬퍼로 판정)
+        error = extract_error_message(event)
+        if error:
+            print(f"\n[오류] {error}", flush=True)
+        elif event.get("type") == "response.done":
+            print(flush=True)
+            transcript_bus.publish("")   # ← 브라우저로도 방송
 
     async def receive(self, frame) -> None:
         # FastRTC가 마이크 프레임이 올 때마다 호출한다.
@@ -155,3 +206,9 @@ class RealtimeVoiceHandler(AsyncStreamHandler):
     async def shutdown(self) -> None:
         if self._session is not None:
             await self._session.close()
+        # 부수효과는 조용히: 저장 실패해도 세션 종료는 정상 진행.
+        try:
+            summary = self._save.execute(self._conversation, self._session_id)
+            print(f"\n[저장됨] transcripts/{self._session_id}.md · {summary}", flush=True)
+        except OSError as exc:
+            print(f"\n[저장 실패] {exc}", flush=True)

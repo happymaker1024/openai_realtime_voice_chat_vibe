@@ -32,3 +32,40 @@ async def test_read_events_stops_quietly_on_close():
     # 핵심: ConnectionClosed가 밖으로 새지 않고 '예외 없이' 끝나야 한다.
     # (try/except가 없으면 이 줄에서 예외가 터져 테스트가 실패한다.)
     await handler._read_events()
+
+
+class UserTranscriptFakeConnection:
+    """사용자 입력 전사 완료 이벤트 한 개를 준 뒤 종료하는 가짜 연결."""
+
+    def __init__(self):
+        self._events = [
+            {
+                "type": "conversation.item.input_audio_transcription.completed",
+                "transcript": "오늘 날씨 알려줘",
+            },
+        ]
+
+    async def send_event(self, event: dict) -> None:
+        pass
+
+    async def recv_event(self) -> dict:
+        if self._events:
+            return self._events.pop(0)
+        raise ConnectionClosed(None, None)
+
+    async def close(self) -> None:
+        pass
+
+
+async def test_user_transcription_completed_adds_user_turn():
+    from voice_agent.domain.turn import Role
+
+    handler = RealtimeVoiceHandler()
+    handler._session = AsyncRealtimeSession(connection=UserTranscriptFakeConnection())
+
+    await handler._read_events()
+
+    assert len(handler._conversation.turns) == 1
+    turn = handler._conversation.turns[0]
+    assert turn.role == Role.USER
+    assert turn.text == "오늘 날씨 알려줘"
