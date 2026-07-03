@@ -1,0 +1,9 @@
+from typing import Protocol
+
+
+class AsyncRealtimeConnection(Protocol):
+    """async 통신 채널의 약속. 진짜 WebSocket도, 테스트용 가짜도 이 모양."""
+
+    async def send_event(self, event: dict) -> None: ...
+    async def recv_event(self) -> dict: ...
+    async def close(self) -> None: ...

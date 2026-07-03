@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>보이스 에이전트</title>
+  <style>
+    :root { --bg:#0f1220; --card:#191d2e; --accent:#ff7a45; --text:#e8eaf2; --muted:#8b90a5; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: system-ui, -apple-system, sans-serif; background:var(--bg);
+           color:var(--text); min-height:100vh; display:flex; align-items:center; justify-content:center; }
+    .card { background:var(--card); padding:44px 40px; border-radius:20px; width:min(92vw,440px);
+            text-align:center; box-shadow:0 20px 60px rgba(0,0,0,.45); }
+    h1 { font-size:20px; margin:0 0 4px; }
+    .sub { color:var(--muted); font-size:13px; margin-bottom:30px; }
+    button { border:none; border-radius:999px; padding:14px 30px; font-size:15px; font-weight:600;
+             cursor:pointer; transition:.15s; color:#fff; background:var(--accent); }
+    button.on { background:#e5484d; }
+    #status { font-size:13px; color:var(--muted); margin-top:20px; min-height:18px; }
+    .dot { display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--muted);
+           margin-right:7px; vertical-align:middle; transition:.2s; }
+    .dot.live { background:#3ddc84; box-shadow:0 0 10px #3ddc84; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>🎙️ 보이스 에이전트</h1>
+    <div class="sub">버튼을 누르고 말을 걸어 보세요</div>
+    <button id="toggle">대화 시작</button>
+    <div id="status"><span class="dot" id="dot"></span><span id="statusText">대기 중</span></div>
+    <audio id="audio" autoplay></audio>
+    <div id="transcript" style="margin-top:22px; font-size:14px; line-height:1.7;
+         color:var(--text); text-align:left; max-height:180px; overflow-y:auto;"></div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
